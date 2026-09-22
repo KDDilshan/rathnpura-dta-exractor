@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Crawl output and state
+data/
+out/
+*.sqlite
+*.sqlite-journal
+*.csv
+*.jsonl
+cache/
+discover-report.json
