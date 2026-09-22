@@ -177,6 +177,57 @@ FROM listings WHERE price_value > 0
 GROUP BY town, category ORDER BY 3 DESC;
 ```
 
+---
+
+## Importing a browser/manual extraction
+
+If you collected listings another way — a browser extraction, a copy-paste, an
+LLM reading the page — `import-table` ingests Markdown tables into the same
+database and export pipeline:
+
+```bash
+ikman-extract --db data/listings.sqlite import-table data/raw/pasted-listings.md
+ikman-extract --db data/listings.sqlite export -o out/ratnapura-land.csv --district Ratnapura
+```
+
+It copes with what such extractions actually look like: several tables
+concatenated with **different column orders**, aliased headers (`Size` /
+`Land Size` / `Extent`), titles containing unescaped `|`, sizes mixing perches
+and acres, and prices quoted per-perch, per-acre or as a total. Everything is
+normalised to `Size (perches)`, `Price per perch` and `Total price`, with the
+original text kept alongside.
+
+### It audits rather than trusts
+
+Two fields in this data are demonstrably unreliable, so the importer flags them
+instead of silently correcting:
+
+- **Location.** ikman's location facet is the *seller's* choice, not the
+  advert's town. A seller who advertises nationwide leaves it on one district
+  while the advert is for a town elsewhere. The importer resolves the town named
+  in the **title** against a district gazetteer (`ikman/gazetteer.py`, Sinhala
+  place names included) and flags `location-mismatch:listed-X-actually-Y` on
+  every disagreement. Towns not in the gazetteer are reported
+  `district-unverified` rather than guessed.
+- **Price basis.** The same advert appears as `Rs 200,000 / perch` in one paste
+  and `Rs 2,000,000 / perch` in another — a 10× difference from reading a total
+  as a rate. Adverts are grouped by title+size and any whose implied total sits
+  more than 3× from the group median is flagged
+  `price-conflicts-with-duplicate`.
+
+Other flags: `per-perch-implausibly-low/high`, `per-perch-high-for-district`,
+`total-implausibly-high`, `size-unit-conflicts-with-title`,
+`price-basis-unstated`, `size-unparsed`. All land in the `attr_data_flags`
+column, so you can filter on them in Excel.
+
+Town spellings are canonicalised across scripts and variants
+(`Rathnapura`, `රත්නපුර` → `Ratnapura`; `Abilipitiya`, `ඇඹිලිපිටිය` →
+`Embilipitiya`), because otherwise one town splits into several groups and every
+per-town aggregate is wrong.
+
+Rows are de-duplicated on title+size+price, so re-importing the same paste is
+idempotent.
+
 ## Project layout
 
 ```
@@ -190,8 +241,10 @@ ikman/
   discover.py    probes the live site and writes what it found
   crawl.py       frontier, pagination, adaptive town fan-out
   export.py      CSV / JSONL / Excel
-  cli.py         discover | crawl | export | stats | towns
-tests/           91 tests, no network required
+  gazetteer.py   Sri Lankan town -> district lookup, for auditing locations
+  tabular.py     Markdown-table import, unit normalisation, data audit
+  cli.py         discover | crawl | import-table | export | stats | towns
+tests/           129 tests, no network required
 ```
 
 ## Tests
@@ -200,9 +253,10 @@ tests/           91 tests, no network required
 pip install pytest && python3 -m pytest -q
 ```
 
-91 tests, all offline. Fixtures cover all four page shapes, and the crawl tests
+129 tests, all offline. Fixtures cover all four page shapes, and the crawl tests
 run the real `Crawler` end to end against an in-memory fake site, covering
-pagination, resume, the saturation fan-out, detail merging and error handling.
+pagination, resume, the saturation fan-out, detail merging and error handling. The importer tests
+cover unit conversion, the location audit and the price-conflict detection.
 
 ## Troubleshooting
 

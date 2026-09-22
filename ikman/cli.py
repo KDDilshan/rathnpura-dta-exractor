@@ -13,6 +13,7 @@ from .discover import run_discovery
 from .export import to_csv, to_excel, to_jsonl
 from .fetcher import Fetcher
 from .store import Store
+from .tabular import import_file, summarise, to_listing
 
 
 def _load_config(args: argparse.Namespace) -> CrawlConfig:
@@ -89,16 +90,49 @@ def cmd_export(args: argparse.Namespace) -> int:
         out = Path(args.out)
         suffix = out.suffix.lower()
         if suffix == ".csv":
-            n = to_csv(store, out, flatten=not args.no_flatten)
+            n = to_csv(store, out, flatten=not args.no_flatten,
+                       district=args.district)
         elif suffix in (".jsonl", ".json"):
-            n = to_jsonl(store, out)
+            n = to_jsonl(store, out, district=args.district)
         elif suffix in (".xlsx", ".xlsm"):
-            n = to_excel(store, out, flatten=not args.no_flatten)
+            n = to_excel(store, out, flatten=not args.no_flatten,
+                         district=args.district)
         else:
             print(f"unsupported output type '{suffix}'; "
                   "use .csv, .jsonl or .xlsx", file=sys.stderr)
             return 2
         print(f"wrote {n} listings to {out}")
+    return 0
+
+
+def cmd_import_table(args: argparse.Namespace) -> int:
+    rows, conflicts = import_file(args.path)
+    if not rows:
+        print(f"no table rows found in {args.path}", file=sys.stderr)
+        return 1
+
+    if args.only_district:
+        kept = [r for r in rows if r.district == args.only_district]
+        print(f"filtering to district {args.only_district!r}: "
+              f"keeping {len(kept)} of {len(rows)} rows")
+    else:
+        kept = rows
+
+    with Store(args.db) as store:
+        new, updated = store.upsert_many([to_listing(r) for r in kept])
+
+    print(json.dumps(summarise(rows), indent=2, ensure_ascii=False))
+    print(f"\nimported {new} new, {updated} merged into existing -> {args.db}")
+
+    flagged = [r for r in kept if r.flags]
+    if flagged:
+        print(f"\n{len(flagged)} of {len(kept)} imported rows carry a data flag; "
+              "see the 'Data flags' attribute column in the export.")
+    if conflicts:
+        print(f"{len(conflicts)} advert(s) appear with conflicting prices:")
+        for conflict in conflicts:
+            print(f"  {conflict['title'][:60]} -> "
+                  f"{', '.join(conflict['variants'])}")
     return 0
 
 
@@ -160,7 +194,17 @@ def build_parser() -> argparse.ArgumentParser:
                           help=".csv, .jsonl or .xlsx")
     p_export.add_argument("--no-flatten", action="store_true",
                           help="keep attributes as one JSON column")
+    p_export.add_argument("--district",
+                          help="export only listings resolved to this district")
     p_export.set_defaults(func=cmd_export)
+
+    p_import = sub.add_parser(
+        "import-table",
+        help="import listings from Markdown tables (e.g. a browser extraction)")
+    p_import.add_argument("path", help="file containing one or more Markdown tables")
+    p_import.add_argument("--only-district",
+                          help="import only rows resolved to this district")
+    p_import.set_defaults(func=cmd_import_table)
 
     p_stats = sub.add_parser("stats", help="summarise what has been collected")
     p_stats.set_defaults(func=cmd_stats)

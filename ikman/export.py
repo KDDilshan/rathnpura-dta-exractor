@@ -36,8 +36,9 @@ def _rows(listings: Iterable[Listing], flatten: bool) -> tuple[list[dict[str, An
     return rows, base + sorted(attr_keys)
 
 
-def to_csv(store: Store, path: str | Path, flatten: bool = True) -> int:
-    rows, columns = _rows(store.iter_listings(), flatten)
+def to_csv(store: Store, path: str | Path, flatten: bool = True,
+           district: str | None = None) -> int:
+    rows, columns = _rows(store.iter_listings(district), flatten)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8-sig") as handle:
@@ -48,18 +49,19 @@ def to_csv(store: Store, path: str | Path, flatten: bool = True) -> int:
     return len(rows)
 
 
-def to_jsonl(store: Store, path: str | Path) -> int:
+def to_jsonl(store: Store, path: str | Path, district: str | None = None) -> int:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     count = 0
     with path.open("w", encoding="utf-8") as handle:
-        for listing in store.iter_listings():
+        for listing in store.iter_listings(district):
             handle.write(json.dumps(listing.to_dict(), ensure_ascii=False) + "\n")
             count += 1
     return count
 
 
-def to_excel(store: Store, path: str | Path, flatten: bool = True) -> int:
+def to_excel(store: Store, path: str | Path, flatten: bool = True,
+             district: str | None = None) -> int:
     try:
         from openpyxl import Workbook
     except ImportError as exc:                       # pragma: no cover
@@ -67,7 +69,7 @@ def to_excel(store: Store, path: str | Path, flatten: bool = True) -> int:
             "Excel export needs openpyxl: pip install openpyxl"
         ) from exc
 
-    rows, columns = _rows(store.iter_listings(), flatten)
+    rows, columns = _rows(store.iter_listings(district), flatten)
     book = Workbook()
     sheet = book.active
     sheet.title = "Ratnapura listings"

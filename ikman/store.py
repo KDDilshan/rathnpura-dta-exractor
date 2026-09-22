@@ -147,8 +147,14 @@ class Store:
             sql += f" LIMIT {int(limit)}"
         return [r["url"] for r in self.conn.execute(sql)]
 
-    def iter_listings(self) -> Iterator[Listing]:
-        for row in self.conn.execute("SELECT * FROM listings ORDER BY listing_id"):
+    def iter_listings(self, district: str | None = None) -> Iterator[Listing]:
+        sql = "SELECT * FROM listings"
+        params: tuple[Any, ...] = ()
+        if district:
+            sql += " WHERE district = ?"
+            params = (district,)
+        sql += " ORDER BY listing_id"
+        for row in self.conn.execute(sql, params):
             yield self._to_listing(row)
 
     def count(self) -> int:
