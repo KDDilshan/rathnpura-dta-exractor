@@ -13,7 +13,7 @@ from .discover import run_discovery
 from .export import to_csv, to_excel, to_jsonl
 from .fetcher import Fetcher
 from .store import Store
-from .tabular import import_file, summarise, to_listing
+from .tabular import import_file, import_json_file, summarise, to_listing
 
 
 def _load_config(args: argparse.Namespace) -> CrawlConfig:
@@ -106,7 +106,8 @@ def cmd_export(args: argparse.Namespace) -> int:
 
 
 def cmd_import_table(args: argparse.Namespace) -> int:
-    rows, conflicts = import_file(args.path)
+    reader = import_json_file if str(args.path).lower().endswith(".json") else import_file
+    rows, conflicts = reader(args.path)
     if not rows:
         print(f"no table rows found in {args.path}", file=sys.stderr)
         return 1
@@ -200,8 +201,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_import = sub.add_parser(
         "import-table",
-        help="import listings from Markdown tables (e.g. a browser extraction)")
-    p_import.add_argument("path", help="file containing one or more Markdown tables")
+        help="import listings from the browser extractor's JSON or from "
+             "Markdown tables")
+    p_import.add_argument(
+        "path",
+        help="a .json payload from browser/ikman-extract.js, or a file of "
+             "Markdown tables")
     p_import.add_argument("--only-district",
                           help="import only rows resolved to this district")
     p_import.set_defaults(func=cmd_import_table)

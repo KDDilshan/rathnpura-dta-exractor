@@ -179,6 +179,39 @@ GROUP BY town, category ORDER BY 3 DESC;
 
 ---
 
+## Getting the data when the crawler cannot reach ikman
+
+`browser/ikman-extract.js` runs in **your** browser, on ikman.lk, and walks
+every page of the current search from inside the page. Same-origin `fetch` is
+allowed there, so it needs no proxy, no credentials and no scraping
+infrastructure — useful when the machine running the crawler cannot reach the
+site.
+
+1. Open the search you want, e.g. `https://ikman.lk/en/ads/ratnapura/land-for-sale`
+2. Open DevTools (**F12**), go to **Console**. If it refuses pasted code, type
+   `allow pasting` first.
+3. Paste the whole file, press Enter, wait. It prints progress per page.
+4. A `.json` file downloads when it finishes.
+
+```bash
+ikman-extract --db data/listings.sqlite import-table ikman-....json
+ikman-extract --db data/listings.sqlite export -o out/land.csv --district Ratnapura
+```
+
+`import-table` detects a `.json` payload and reads it through the same
+normalisation and audit as the Markdown path.
+
+It uses the same layered strategies as the Python extractors (JSON-LD, the
+hydration payload, then advert-anchor cards) and merges all three per page, so a
+field any one of them saw is kept. It pauses 1.2 s between pages, stops on the
+first non-200, stops when a page yields nothing new, and caps at 100 pages. It
+reads only pages you could click to yourself and never touches contact details
+or the "show phone number" action.
+
+**Records from this route carry the advert URL**, which is authoritative
+identity — so unlike a Markdown paste, two different plots with the same title,
+size and price stay separate rows, and re-importing is exactly idempotent.
+
 ## Importing a browser/manual extraction
 
 If you collected listings another way — a browser extraction, a copy-paste, an
@@ -244,7 +277,8 @@ ikman/
   gazetteer.py   Sri Lankan town -> district lookup, for auditing locations
   tabular.py     Markdown-table import, unit normalisation, data audit
   cli.py         discover | crawl | import-table | export | stats | towns
-tests/           129 tests, no network required
+browser/         ikman-extract.js - in-browser extractor (see above)
+tests/           135 tests, no network required
 ```
 
 ## Tests
@@ -253,7 +287,7 @@ tests/           129 tests, no network required
 pip install pytest && python3 -m pytest -q
 ```
 
-129 tests, all offline. Fixtures cover all four page shapes, and the crawl tests
+135 tests, all offline. Fixtures cover all four page shapes, and the crawl tests
 run the real `Crawler` end to end against an in-memory fake site, covering
 pagination, resume, the saturation fan-out, detail merging and error handling. The importer tests
 cover unit conversion, the location audit and the price-conflict detection.

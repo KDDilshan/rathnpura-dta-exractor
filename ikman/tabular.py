@@ -19,11 +19,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 import hashlib
+import json
 import re
 
 from .gazetteer import RATNAPURA, district_of, find_town
 from .models import Listing
-from .parsing import clean
+from .parsing import clean, parse_posted
 
 PERCHES_PER_ACRE = 160.0
 SQM_PER_PERCH = 25.2929
@@ -176,9 +177,28 @@ class ImportedRow:
     flags: list[str] = field(default_factory=list)
     source_table: str | None = None
 
+    # Present only for rows from the browser extractor, which sees the real page.
+    advert_url: str | None = None
+    posted_text: str | None = None
+    promoted: bool = False
+    description: str | None = None
+    condition: str | None = None
+    category_text: str | None = None
+    image_urls: list[str] = field(default_factory=list)
+    extracted_by: str = "table-import"
+
     @property
     def row_key(self) -> str:
-        """Identity for deduplication: the advert, not the paste it came from."""
+        """Identity for deduplication.
+
+        A real advert URL is the authoritative identity. Markdown pastes have no
+        URL, so those fall back to title+size+price, which collapses exact
+        repeats across pages.
+        """
+        if self.advert_url:
+            return hashlib.sha1(
+                self.advert_url.split("?")[0].encode("utf-8")
+            ).hexdigest()[:16]
         basis = f"{self.title.strip().lower()}|{self.size_perches}|{self.price_amount}"
         return hashlib.sha1(basis.encode("utf-8")).hexdigest()[:16]
 
@@ -319,21 +339,27 @@ def to_listing(row: ImportedRow) -> Listing:
         "Source table": row.source_table,
     }
     return Listing(
-        url=f"imported:land/{row.row_key}",
+        url=row.advert_url or f"imported:land/{row.row_key}",
         title=row.title,
         price_text=row.price_text,
         price_value=row.price_total,
         currency="LKR" if row.price_amount else None,
         price_qualifier=(f"per {row.price_basis}" if row.price_basis in
                          ("perch", "acre") else row.price_basis),
-        category="Land",
+        category=row.category_text or "Land",
         subcategory="Land for sale",
         location_text=row.location_listed,
         town=row.town,
         district=row.district,
+        description=row.description,
+        condition=row.condition or attributes.get("Condition"),
+        posted_text=row.posted_text,
+        posted_at=parse_posted(row.posted_text),
+        is_promoted=row.promoted,
+        image_urls=list(row.image_urls),
         attributes={k: v for k, v in attributes.items() if v is not None},
-        source_page="markdown-import",
-        extracted_by="table-import",
+        source_page=row.source_table or "markdown-import",
+        extracted_by=row.extracted_by,
     )
 
 
@@ -345,6 +371,52 @@ def import_text(text: str) -> tuple[list[ImportedRow], list[dict[str, Any]]]:
 
 def import_file(path: str | Path) -> tuple[list[ImportedRow], list[dict[str, Any]]]:
     return import_text(Path(path).read_text(encoding="utf-8"))
+
+
+def normalise_json_record(record: dict[str, Any]) -> ImportedRow:
+    """Normalise one record from the browser extractor (browser/ikman-extract.js).
+
+    Same audit as the Markdown path, but these records carry the advert's real
+    URL, so identity comes from the URL instead of a title+size+price hash.
+    """
+    row = normalise({
+        "title": record.get("title") or "",
+        "location": record.get("location_text"),
+        "size": record.get("size_text") or _size_from_title(record.get("title")),
+        "price": record.get("price_text"),
+        "_table": record.get("source_page"),
+    })
+    row.advert_url = record.get("url")
+    row.posted_text = record.get("posted_text")
+    row.promoted = bool(record.get("promoted"))
+    row.description = record.get("description")
+    row.condition = record.get("condition")
+    row.category_text = record.get("category")
+    row.image_urls = [u for u in (record.get("images") or []) if isinstance(u, str)]
+    row.extracted_by = ",".join(record.get("_by") or []) or "browser-extract"
+    return row
+
+
+def _size_from_title(title: str | None) -> str | None:
+    """Fall back to a size stated in the title when the card had no size field."""
+    if not title:
+        return None
+    match = re.search(r"(\d[\d.,]*)\s*(perch(?:es)?|acres?)", title, re.IGNORECASE)
+    return match.group(0) if match else None
+
+
+def import_json_file(path: str | Path) -> tuple[list[ImportedRow], list[dict[str, Any]]]:
+    """Read a payload produced by the browser extractor."""
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if isinstance(payload, list):
+        records = payload                      # someone pasted just the array
+    elif isinstance(payload, dict):
+        records = payload.get("listings") or []
+    else:
+        records = []
+    rows = [normalise_json_record(r) for r in records if isinstance(r, dict)]
+    conflicts = audit_conflicts(rows)
+    return rows, conflicts
 
 
 def summarise(rows: Iterable[ImportedRow]) -> dict[str, Any]:
