@@ -19,14 +19,40 @@ DEFAULT_LOCALE = "en"
 # location facet and each town below it as a child facet.
 DISTRICT_NAME = "Ratnapura"
 
-# Candidate district slugs, most likely first. `discover` picks whichever
-# resolves to a search page that yields listings.
+# CONFIRMED from live URLs: the district facet is the bare slug "ratnapura",
+# e.g. https://ikman.lk/en/ads/ratnapura/land-for-sale
 DISTRICT_SLUG_CANDIDATES = [
     "ratnapura",
     "ratnapura-district",
     "rathnapura",
     "ratnapura-sri-lanka",
 ]
+
+# Town facets are bare slugs too (.../ads/eheliyagoda/land-for-sale), but a
+# *city* facet inside a district carries a numeric id ("ratnapura-91" is
+# Ratnapura City, "kurunegala-61" is Kurunegala City). The ids are not derivable
+# from the name, so `discover` has to read them off the location filter; a bare
+# slugified town is tried first and the numeric form only comes from discovery.
+CITY_SLUG_PATTERN = r"^[a-z0-9-]+-\d+$"
+
+# Town slugs seen in live URLs. Others are slugified from RATNAPURA_TOWNS.
+VERIFIED_TOWN_SLUGS = {
+    "Ratnapura": "ratnapura",
+    "Eheliyagoda": "eheliyagoda",
+    "Balangoda": "balangoda",
+    "Pelmadulla": "pelmadulla",
+    "Kuruwita": "kuruwita",
+}
+
+# Advert counts read off live category pages, for sanity-checking a crawl's
+# coverage. Approximate and they drift, but an order of magnitude below these
+# means the crawl is truncating.
+KNOWN_LISTING_COUNTS = {
+    "ratnapura/land-for-sale": 235,
+    "ratnapura-91/land-for-sale": 66,      # Ratnapura City
+    "eheliyagoda/land-for-sale": 72,
+    "kuruwita/land-for-sale": 19,
+}
 
 # Towns / localities within Ratnapura District. Used to fan the crawl out so no
 # single query hits the site's pagination ceiling (see crawl.build_frontier).
@@ -40,9 +66,12 @@ RATNAPURA_TOWNS = [
 
 # Top-level ikman categories. Children are discovered from the live category
 # nav; these seeds guarantee coverage even if discovery of the nav fails.
+# "land-for-sale" and "property" are confirmed from live URLs; the rest are
+# seeds that `discover` replaces with the real category nav.
 CATEGORY_SEEDS = [
-    "vehicles",
+    "land-for-sale",
     "property",
+    "vehicles",
     "electronics",
     "home-garden",
     "animals",
@@ -79,7 +108,9 @@ class CrawlConfig:
 
     # Safety rails
     obey_robots: bool = True
-    max_pages_per_query: int = 25
+    # A live URL was observed at ?page=41 for the district-wide query, so the
+    # cap has to sit above that or the crawl truncates without saying so.
+    max_pages_per_query: int = 60
     max_listings: int | None = None
     user_agent: str = (
         "ikman-ratnapura-extractor/0.1 (+https://github.com/KDDilshan/"
